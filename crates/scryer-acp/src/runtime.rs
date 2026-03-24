@@ -318,7 +318,7 @@ async fn start_acp_session(
     let mut child = tokio::process::Command::new(agent_binary)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to spawn {agent_binary}: {e}"))?;
@@ -360,6 +360,9 @@ async fn start_acp_session(
     let prompt_text = sync_prompt(model_name, cwd, drifted, structure_changed);
     let sid = session.session_id.clone();
 
+    // Move `child` into the task so it stays alive for the session duration.
+    // Without this, `kill_on_drop(true)` kills the agent process when the
+    // function returns — before the prompt has been processed.
     tokio::task::spawn_local(async move {
         let prompt_fut = connection.prompt(PromptRequest::new(
             sid.clone(),
@@ -392,6 +395,7 @@ async fn start_acp_session(
                 let _ = event_tx.send(AgentEvent::Cancelled);
             }
         }
+        drop(child);
         let _ = done_tx.send(RuntimeCommand::Done);
     });
 
